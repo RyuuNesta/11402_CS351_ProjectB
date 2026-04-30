@@ -1,0 +1,6 @@
+Item,Category,Price (USD),In Stock
+Espresso,Coffee,3.0,True
+Latte,Coffee,4.5,True
+Cappuccino,Coffee,4.5,True
+Americano,Coffee,3.5,True
+Mocha,Coffee,5.0,False
