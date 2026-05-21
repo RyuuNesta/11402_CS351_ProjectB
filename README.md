@@ -40,3 +40,15 @@ Upon completion, the system should:
 - File I/O and parsing techniques
 - Query optimization and execution planning
 - Algorithm complexity analysis (Big O notation)
+
+## Select Feature Implementation
+The `query_engine.py` script provides a basic SQL-like SELECT implementation for CSV tables.
+
+Usage examples:
+- `python query_engine.py "SELECT * FROM menu"`
+- `python query_engine.py "SELECT Item, Category FROM menu WHERE In Stock = True"`
+
+The script maps the `menu` table to `coffee_menu_items.csv` and supports:
+- `SELECT *` or selected column lists
+- `FROM <table>` for CSV table lookup
+- `WHERE <column> <operator> <value>` with `=`, `!=`, `>`, `<`, `>=`, `<=`
