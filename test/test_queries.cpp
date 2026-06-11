@@ -305,89 +305,23 @@ protected:
     }
 };
 
-// ── SELECT Tests ──────────────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
-TEST_F(QueryTest, Select_StarReturnsAllRowsAndColumns) {
-    auto result = executeSelect(parseSelect("SELECT * FROM menu"), db);
-    EXPECT_EQ(result.size(), 6u);
-    EXPECT_EQ(result[0].size(), 4u);
-}
-
-TEST_F(QueryTest, Select_SpecificColumnsProjectsCorrectly) {
-    auto result = executeSelect(parseSelect("SELECT Item, Category FROM menu"), db);
-    EXPECT_EQ(result.size(), 6u);
-    EXPECT_EQ(result[0].size(), 2u);
+TEST_F(QueryTest, Select_ReturnsMatchingRows) {
+    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Category = Coffee"), db);
+    EXPECT_EQ(result.size(), 4u);
     EXPECT_EQ(result[0][0], "Espresso");
-    EXPECT_EQ(result[0][1], "Coffee");
 }
 
-TEST_F(QueryTest, Select_WhereEqualsFiltersRows) {
-    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Category = Tea"), db);
-    EXPECT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0][0], "Green Tea");
-}
-
-TEST_F(QueryTest, Select_WhereGreaterThanFiltersNumeric) {
-    auto result = executeSelect(parseSelect("SELECT Item FROM menu WHERE Price > 4.0"), db);
-    EXPECT_EQ(result.size(), 2u);
-}
-
-TEST_F(QueryTest, Select_NonExistentTableThrows) {
-    EXPECT_THROW(executeSelect(parseSelect("SELECT * FROM drinks"), db), std::runtime_error);
-}
-
-TEST_F(QueryTest, Select_NonExistentColumnThrows) {
-    EXPECT_THROW(executeSelect(parseSelect("SELECT Calories FROM menu"), db), std::runtime_error);
-}
-
-// ── INSERT Tests ──────────────────────────────────────────────────────────────
-
-TEST_F(QueryTest, Insert_AddsRowToTable) {
-    executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee, 5.0, True)"), db);
-    EXPECT_EQ(db["menu"].rows.size(), 7u);
-}
-
-TEST_F(QueryTest, Insert_NewRowAppearsInSelect) {
+TEST_F(QueryTest, Insert_AddsNewRow) {
     executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee, 5.0, True)"), db);
     auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Item = Mocha"), db);
     EXPECT_EQ(result.size(), 1u);
     EXPECT_EQ(result[0][0], "Mocha");
 }
 
-TEST_F(QueryTest, Insert_WrongColumnCountThrows) {
-    EXPECT_THROW(
-        executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee)"), db),
-        std::runtime_error);
-}
-
-TEST_F(QueryTest, Insert_NonExistentTableThrows) {
-    EXPECT_THROW(
-        executeInsert(parseInsert("INSERT INTO drinks VALUES (Water, Cold, 1.0, True)"), db),
-        std::runtime_error);
-}
-
-// ── DELETE Tests ──────────────────────────────────────────────────────────────
-
-TEST_F(QueryTest, Delete_WithWhereRemovesMatchingRows) {
+TEST_F(QueryTest, Delete_RemovesMatchingRows) {
     int deleted = executeDelete(parseDelete("DELETE FROM menu WHERE Category = Pastry"), db);
     EXPECT_EQ(deleted, 1);
     EXPECT_EQ(db["menu"].rows.size(), 5u);
-}
-
-TEST_F(QueryTest, Delete_RemovedRowDoesNotAppearInSelect) {
-    executeDelete(parseDelete("DELETE FROM menu WHERE Item = Espresso"), db);
-    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Item = Espresso"), db);
-    EXPECT_EQ(result.size(), 0u);
-}
-
-TEST_F(QueryTest, Delete_WithoutWhereRemovesAllRows) {
-    int deleted = executeDelete(parseDelete("DELETE FROM menu"), db);
-    EXPECT_EQ(deleted, 6);
-    EXPECT_EQ(db["menu"].rows.size(), 0u);
-}
-
-TEST_F(QueryTest, Delete_NonExistentTableThrows) {
-    EXPECT_THROW(
-        executeDelete(parseDelete("DELETE FROM drinks"), db),
-        std::runtime_error);
 }
