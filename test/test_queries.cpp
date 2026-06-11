@@ -1,14 +1,13 @@
-#include <iostream>
-#include <fstream>
-#include <sstream>
+#include <gtest/gtest.h>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
 #include <stdexcept>
 #include <optional>
+#include <sstream>
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
+// ── Embedded implementation ───────────────────────────────────────────────────
 
 std::string trim(const std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
@@ -30,38 +29,11 @@ std::vector<std::string> splitCSVLine(const std::string& line) {
     return fields;
 }
 
-// ── CSV Storage ───────────────────────────────────────────────────────────────
-
 struct Table {
     std::string name;
     std::vector<std::string> columns;
     std::vector<std::vector<std::string>> rows;
 };
-
-Table loadCSV(const std::string& filepath, const std::string& tableName) {
-    std::ifstream file(filepath);
-    if (!file.is_open())
-        throw std::runtime_error("Cannot open file: " + filepath);
-
-    Table table;
-    table.name = tableName;
-
-    std::string line;
-    bool firstLine = true;
-    while (std::getline(file, line)) {
-        if (trim(line).empty()) continue;
-        auto fields = splitCSVLine(line);
-        if (firstLine) {
-            table.columns = fields;
-            firstLine = false;
-        } else {
-            table.rows.push_back(fields);
-        }
-    }
-    return table;
-}
-
-// ── Shared: WHERE condition ───────────────────────────────────────────────────
 
 struct Condition {
     std::string column;
@@ -124,7 +96,7 @@ bool matchRow(const std::vector<std::string>& row,
     return false;
 }
 
-// ── SELECT ────────────────────────────────────────────────────────────────────
+// SELECT
 
 struct SelectQuery {
     bool selectAll = false;
@@ -165,13 +137,14 @@ SelectQuery parseSelect(const std::string& query) {
     if (!(ss >> token))
         throw std::runtime_error("Expected table name after FROM");
     q.tableName = token;
-
     q.where = parseWhereClause(ss);
     return q;
 }
 
-void executeSelect(const SelectQuery& query,
-                   const std::unordered_map<std::string, Table>& db) {
+std::vector<std::vector<std::string>> executeSelect(
+    const SelectQuery& query,
+    const std::unordered_map<std::string, Table>& db) {
+
     auto it = db.find(query.tableName);
     if (it == db.end())
         throw std::runtime_error("Table not found: " + query.tableName);
@@ -179,60 +152,31 @@ void executeSelect(const SelectQuery& query,
     const Table& table = it->second;
 
     std::vector<int> colIndices;
-    std::vector<std::string> colNames;
-
     if (query.selectAll) {
         for (int i = 0; i < (int)table.columns.size(); ++i)
             colIndices.push_back(i);
-        colNames = table.columns;
     } else {
         for (const auto& col : query.columns) {
             auto cit = std::find(table.columns.begin(), table.columns.end(), col);
             if (cit == table.columns.end())
                 throw std::runtime_error("Column not found: " + col);
             colIndices.push_back((int)(cit - table.columns.begin()));
-            colNames.push_back(col);
         }
     }
 
-    std::vector<const std::vector<std::string>*> filtered;
-    for (const auto& row : table.rows)
-        if (!query.where || matchRow(row, table.columns, *query.where))
-            filtered.push_back(&row);
-
-    std::vector<int> widths(colNames.size());
-    for (size_t i = 0; i < colNames.size(); ++i)
-        widths[i] = (int)colNames[i].size();
-    for (const auto* row : filtered)
-        for (size_t i = 0; i < colIndices.size(); ++i) {
-            int idx = colIndices[i];
-            int len = (idx < (int)row->size()) ? (int)(*row)[idx].size() : 0;
-            widths[i] = std::max(widths[i], len);
-        }
-
-    std::string sep = "+";
-    for (int w : widths) sep += std::string(w + 2, '-') + "+";
-
-    std::cout << sep << "\n";
-    for (size_t i = 0; i < colNames.size(); ++i)
-        std::cout << "| " << colNames[i]
-                  << std::string(widths[i] - colNames[i].size(), ' ') << " ";
-    std::cout << "|\n" << sep << "\n";
-
-    for (const auto* row : filtered) {
-        for (size_t i = 0; i < colIndices.size(); ++i) {
-            int idx = colIndices[i];
-            std::string val = (idx < (int)row->size()) ? (*row)[idx] : "";
-            std::cout << "| " << val
-                      << std::string(widths[i] - val.size(), ' ') << " ";
-        }
-        std::cout << "|\n";
+    std::vector<std::vector<std::string>> result;
+    for (const auto& row : table.rows) {
+        if (query.where && !matchRow(row, table.columns, *query.where))
+            continue;
+        std::vector<std::string> projected;
+        for (int idx : colIndices)
+            projected.push_back((idx < (int)row.size()) ? row[idx] : "");
+        result.push_back(projected);
     }
-    std::cout << sep << "\n";
-    std::cout << filtered.size() << " row(s) returned.\n";
+    return result;
 }
 
-// ── INSERT ────────────────────────────────────────────────────────────────────
+// INSERT
 
 struct InsertQuery {
     std::string tableName;
@@ -253,8 +197,6 @@ InsertQuery parseInsert(const std::string& query) {
         throw std::runtime_error("Expected INTO after INSERT");
 
     ss >> q.tableName;
-    if (q.tableName.empty())
-        throw std::runtime_error("Expected table name after INTO");
 
     ss >> token;
     if (toUpper(token) != "VALUES")
@@ -291,10 +233,9 @@ void executeInsert(const InsertQuery& query,
             " values, got " + std::to_string(query.values.size()));
 
     table.rows.push_back(query.values);
-    std::cout << "1 row inserted.\n";
 }
 
-// ── DELETE ────────────────────────────────────────────────────────────────────
+// DELETE
 
 struct DeleteQuery {
     std::string tableName;
@@ -315,9 +256,6 @@ DeleteQuery parseDelete(const std::string& query) {
         throw std::runtime_error("Expected FROM after DELETE");
 
     ss >> q.tableName;
-    if (q.tableName.empty())
-        throw std::runtime_error("Expected table name after FROM");
-
     q.where = parseWhereClause(ss);
     return q;
 }
@@ -342,50 +280,114 @@ int executeDelete(const DeleteQuery& query,
             table.rows.end());
     }
 
-    int deleted = before - (int)table.rows.size();
-    std::cout << deleted << " row(s) deleted.\n";
-    return deleted;
+    return before - (int)table.rows.size();
 }
 
-// ── REPL ──────────────────────────────────────────────────────────────────────
+// ── Test Fixture ──────────────────────────────────────────────────────────────
 
-int main() {
+class QueryTest : public ::testing::Test {
+protected:
     std::unordered_map<std::string, Table> db;
-    try {
-        db["menu"] = loadCSV("data/coffee_menu_items.csv", "menu");
-    } catch (const std::exception& e) {
-        std::cerr << "Warning: " << e.what() << "\n";
+
+    void SetUp() override {
+        Table menu;
+        menu.name    = "menu";
+        menu.columns = {"Item", "Category", "Price", "In Stock"};
+        menu.rows    = {
+            {"Espresso",   "Coffee", "3.0", "True"},
+            {"Latte",      "Coffee", "4.5", "True"},
+            {"Cappuccino", "Coffee", "4.5", "True"},
+            {"Americano",  "Coffee", "3.5", "True"},
+            {"Green Tea",  "Tea",    "2.5", "True"},
+            {"Croissant",  "Pastry", "3.0", "False"},
+        };
+        db["menu"] = menu;
     }
+};
 
-    std::cout << "CSV Query Engine\n";
-    std::cout << "Loaded tables: ";
-    for (auto& kv : db) std::cout << kv.first << " ";
-    std::cout << "\nSupported: SELECT, INSERT, DELETE  |  type 'exit' to quit.\n\n";
+// ── SELECT Tests ──────────────────────────────────────────────────────────────
 
-    std::string line;
-    while (true) {
-        std::cout << ">> ";
-        if (!std::getline(std::cin, line)) break;
-        line = trim(line);
-        if (line.empty()) continue;
-        if (toUpper(line) == "EXIT") break;
+TEST_F(QueryTest, Select_StarReturnsAllRowsAndColumns) {
+    auto result = executeSelect(parseSelect("SELECT * FROM menu"), db);
+    EXPECT_EQ(result.size(), 6u);
+    EXPECT_EQ(result[0].size(), 4u);
+}
 
-        try {
-            std::string keyword = toUpper(line.substr(0, line.find(' ')));
-            if (keyword == "SELECT") {
-                executeSelect(parseSelect(line), db);
-            } else if (keyword == "INSERT") {
-                executeInsert(parseInsert(line), db);
-            } else if (keyword == "DELETE") {
-                executeDelete(parseDelete(line), db);
-            } else {
-                std::cerr << "Unknown command. Use SELECT, INSERT, or DELETE.\n";
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "Error: " << e.what() << "\n";
-        }
-        std::cout << "\n";
-    }
+TEST_F(QueryTest, Select_SpecificColumnsProjectsCorrectly) {
+    auto result = executeSelect(parseSelect("SELECT Item, Category FROM menu"), db);
+    EXPECT_EQ(result.size(), 6u);
+    EXPECT_EQ(result[0].size(), 2u);
+    EXPECT_EQ(result[0][0], "Espresso");
+    EXPECT_EQ(result[0][1], "Coffee");
+}
 
-    return 0;
+TEST_F(QueryTest, Select_WhereEqualsFiltersRows) {
+    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Category = Tea"), db);
+    EXPECT_EQ(result.size(), 1u);
+    EXPECT_EQ(result[0][0], "Green Tea");
+}
+
+TEST_F(QueryTest, Select_WhereGreaterThanFiltersNumeric) {
+    auto result = executeSelect(parseSelect("SELECT Item FROM menu WHERE Price > 4.0"), db);
+    EXPECT_EQ(result.size(), 2u);
+}
+
+TEST_F(QueryTest, Select_NonExistentTableThrows) {
+    EXPECT_THROW(executeSelect(parseSelect("SELECT * FROM drinks"), db), std::runtime_error);
+}
+
+TEST_F(QueryTest, Select_NonExistentColumnThrows) {
+    EXPECT_THROW(executeSelect(parseSelect("SELECT Calories FROM menu"), db), std::runtime_error);
+}
+
+// ── INSERT Tests ──────────────────────────────────────────────────────────────
+
+TEST_F(QueryTest, Insert_AddsRowToTable) {
+    executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee, 5.0, True)"), db);
+    EXPECT_EQ(db["menu"].rows.size(), 7u);
+}
+
+TEST_F(QueryTest, Insert_NewRowAppearsInSelect) {
+    executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee, 5.0, True)"), db);
+    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Item = Mocha"), db);
+    EXPECT_EQ(result.size(), 1u);
+    EXPECT_EQ(result[0][0], "Mocha");
+}
+
+TEST_F(QueryTest, Insert_WrongColumnCountThrows) {
+    EXPECT_THROW(
+        executeInsert(parseInsert("INSERT INTO menu VALUES (Mocha, Coffee)"), db),
+        std::runtime_error);
+}
+
+TEST_F(QueryTest, Insert_NonExistentTableThrows) {
+    EXPECT_THROW(
+        executeInsert(parseInsert("INSERT INTO drinks VALUES (Water, Cold, 1.0, True)"), db),
+        std::runtime_error);
+}
+
+// ── DELETE Tests ──────────────────────────────────────────────────────────────
+
+TEST_F(QueryTest, Delete_WithWhereRemovesMatchingRows) {
+    int deleted = executeDelete(parseDelete("DELETE FROM menu WHERE Category = Pastry"), db);
+    EXPECT_EQ(deleted, 1);
+    EXPECT_EQ(db["menu"].rows.size(), 5u);
+}
+
+TEST_F(QueryTest, Delete_RemovedRowDoesNotAppearInSelect) {
+    executeDelete(parseDelete("DELETE FROM menu WHERE Item = Espresso"), db);
+    auto result = executeSelect(parseSelect("SELECT * FROM menu WHERE Item = Espresso"), db);
+    EXPECT_EQ(result.size(), 0u);
+}
+
+TEST_F(QueryTest, Delete_WithoutWhereRemovesAllRows) {
+    int deleted = executeDelete(parseDelete("DELETE FROM menu"), db);
+    EXPECT_EQ(deleted, 6);
+    EXPECT_EQ(db["menu"].rows.size(), 0u);
+}
+
+TEST_F(QueryTest, Delete_NonExistentTableThrows) {
+    EXPECT_THROW(
+        executeDelete(parseDelete("DELETE FROM drinks"), db),
+        std::runtime_error);
 }
